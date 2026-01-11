@@ -1,36 +1,37 @@
 """
 配置模块 - 集中管理应用配置和常量
 """
+from typing import Final
 
 # === 应用配置 ===
-APP_TITLE = "AI 循证医学助手"
-PAGE_LAYOUT = "wide"
+APP_TITLE: Final[str] = "AI 循证医学助手"
+PAGE_LAYOUT: Final[str] = "wide"
 
 # === 数据库配置 ===
-DB_PATH = "./medical_db"
-COLLECTION_NAME = "medical_knowledge"
+DB_PATH: Final[str] = "./medical_db"
+COLLECTION_NAME: Final[str] = "medical_knowledge"
 
 # === 模型配置 ===
-EMBEDDING_MODEL = "bge-m3"
-LLM_MODEL = "qwen2.5:7b"
-RERANKER_MODEL = "BAAI/bge-reranker-base"
+EMBEDDING_MODEL: Final[str] = "bge-m3"
+LLM_MODEL: Final[str] = "qwen2.5:7b"
+RERANKER_MODEL: Final[str] = "BAAI/bge-reranker-base"
 
 # === 文档处理配置 ===
-CHUNK_SIZE = 600
-CHUNK_OVERLAP_LINES = 3
-BATCH_SIZE = 20
+CHUNK_SIZE: Final[int] = 600
+CHUNK_OVERLAP_LINES: Final[int] = 3
+BATCH_SIZE: Final[int] = 20
 
 # === 搜索配置 ===
-MULTI_QUERY_COUNT = 2
-RECALL_N_RESULTS = 3
-RERANK_TOP_K = 3
-RERANK_THRESHOLD = -10
+MULTI_QUERY_COUNT: Final[int] = 2
+RECALL_N_RESULTS: Final[int] = 3
+RERANK_TOP_K: Final[int] = 3
+RERANK_THRESHOLD: Final[float] = -10.0
 
 # === LLM 配置 ===
-MAX_REASONING_STEPS = 5
-CONTEXT_HISTORY_TURNS = 2
-LLM_TEMPERATURE_STRICT = 0
-LLM_TEMPERATURE_CREATIVE = 0.7
+MAX_REASONING_STEPS: Final[int] = 5
+CONTEXT_HISTORY_TURNS: Final[int] = 2
+LLM_TEMPERATURE_STRICT: Final[float] = 0.0
+LLM_TEMPERATURE_CREATIVE: Final[float] = 0.7
 
 # === 系统提示词 ===
 SYSTEM_PROMPT = """

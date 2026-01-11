@@ -1,0 +1,16 @@
+# Core Application Framework
+streamlit>=1.29.0
+
+# AI and ML Dependencies
+ollama>=0.1.7
+chromadb>=0.4.22
+sentence-transformers>=2.2.2
+torch>=2.0.0
+numpy>=1.24.0
+
+# Document Processing
+pymupdf4llm>=0.0.9
+
+# Utilities
+python-dotenv>=1.0.0
+tqdm>=4.66.0

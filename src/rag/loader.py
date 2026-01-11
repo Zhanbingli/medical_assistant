@@ -5,11 +5,11 @@ import ollama
 import uuid
 from typing import List, Tuple, Optional, Callable
 import logging
+from functools import lru_cache
 
 from config import CHUNK_SIZE, CHUNK_OVERLAP_LINES, BATCH_SIZE, EMBEDDING_MODEL
 from .database import MedicalKnowledgeDB
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -33,6 +33,10 @@ class MarkdownProcessor:
         Returns:
             文档块列表
         """
+        if not text or not text.strip():
+            logger.warning("输入文本为空或仅包含空白字符")
+            return []
+            
         lines = text.split('\n')
         chunks = []
         current_chunk = []
@@ -62,7 +66,7 @@ class MarkdownProcessor:
 
             # 达到分块大小，保存当前块
             if current_length > chunk_size:
-                header_context = " > ".join(current_headers)
+                header_context = " > ".join(current_headers) if current_headers else "未分类"
                 full_text = f"【章节：{header_context}】\n" + "\n".join(current_chunk)
                 chunks.append(full_text)
 
@@ -72,7 +76,7 @@ class MarkdownProcessor:
 
         # 保存最后一块
         if current_chunk:
-            header_context = " > ".join(current_headers)
+            header_context = " > ".join(current_headers) if current_headers else "未分类"
             full_text = f"【章节：{header_context}】\n" + "\n".join(current_chunk)
             chunks.append(full_text)
 
@@ -99,9 +103,10 @@ class DocumentEmbedder:
         self.batch_size = batch_size
         logger.info(f"文档嵌入器已初始化: 模型={model_name}, 批大小={batch_size}")
 
+    @lru_cache(maxsize=128)
     def embed_text(self, text: str) -> Optional[List[float]]:
         """
-        生成单个文本的向量
+        生成单个文本的向量（带缓存）
 
         Args:
             text: 文本内容
@@ -109,11 +114,19 @@ class DocumentEmbedder:
         Returns:
             向量或 None（失败时）
         """
+        if not text or len(text.strip()) < 5:
+            logger.warning("文本过短，跳过嵌入生成")
+            return None
+            
         try:
             response = ollama.embeddings(model=self.model_name, prompt=text)
-            return response['embedding']
+            embedding = response.get('embedding')
+            if embedding is None:
+                logger.error(f"Ollama 返回的 embedding 为 None")
+                return None
+            return embedding
         except Exception as e:
-            logger.error(f"嵌入生成失败: {e}")
+            logger.error(f"嵌入生成失败: {e}, 文本长度: {len(text)}")
             return None
 
     def process_file(
@@ -135,6 +148,10 @@ class DocumentEmbedder:
         Returns:
             (成功标志, 结果信息/错误信息)
         """
+        if not content or not content.strip():
+            logger.warning(f"文件内容为空: {filename}")
+            return False, "EMPTY"
+            
         # 检查文件是否已存在
         existing_files = db.get_existing_files()
         if filename in existing_files:
@@ -146,7 +163,7 @@ class DocumentEmbedder:
         total_chunks = len(raw_chunks)
 
         if total_chunks == 0:
-            logger.warning(f"文件为空: {filename}")
+            logger.warning(f"文件分块后为空: {filename}")
             return False, "EMPTY"
 
         logger.info(f"开始处理文件: {filename}, 共 {total_chunks} 块")
@@ -154,16 +171,20 @@ class DocumentEmbedder:
         # 批量处理
         ids_batch, embeddings_batch, documents_batch, metadatas_batch = [], [], [], []
         processed_count = 0
+        failed_count = 0
 
         for i, chunk in enumerate(raw_chunks):
             # 跳过过短的块
             if len(chunk) < 10:
+                logger.debug(f"跳过过短块 (索引 {i}, 长度 {len(chunk)})")
+                failed_count += 1
                 continue
 
             # 生成嵌入
             embedding = self.embed_text(chunk)
             if embedding is None:
-                logger.error(f"块 {i} 嵌入失败，跳过")
+                logger.error(f"块 {i} 嵌入失败，跳过 (长度: {len(chunk)})")
+                failed_count += 1
                 continue
 
             # 添加到批次
@@ -172,7 +193,8 @@ class DocumentEmbedder:
             documents_batch.append(chunk)
             metadatas_batch.append({
                 "source": filename,
-                "chunk_index": i
+                "chunk_index": i,
+                "chunk_length": len(chunk)
             })
 
             # 批量写入数据库
@@ -182,6 +204,7 @@ class DocumentEmbedder:
                     documents_batch, metadatas_batch
                 )
                 if not success:
+                    logger.error(f"批量写入失败: {error}")
                     return False, error
 
                 processed_count += len(ids_batch)
@@ -189,8 +212,11 @@ class DocumentEmbedder:
 
             # 更新进度
             if progress_callback:
-                progress = (i + 1) / total_chunks
-                progress_callback(progress, f"正在学习新书: {filename}...")
+                try:
+                    progress = (i + 1) / total_chunks
+                    progress_callback(progress, f"正在学习新书: {filename}... ({processed_count + len(ids_batch)}/{total_chunks})")
+                except Exception as e:
+                    logger.warning(f"进度回调失败: {e}")
 
         # 写入剩余数据
         if ids_batch:
@@ -199,8 +225,14 @@ class DocumentEmbedder:
                 documents_batch, metadatas_batch
             )
             if not success:
+                logger.error(f"最后批次写入失败: {error}")
                 return False, error
             processed_count += len(ids_batch)
 
-        logger.info(f"文件处理完成: {filename}, 成功 {processed_count} 块")
+        total_processed = processed_count + failed_count
+        logger.info(f"文件处理完成: {filename}, 成功 {processed_count} 块, 失败 {failed_count} 块")
+        
+        if processed_count == 0:
+            return False, "NO_VALID_CHUNKS"
+            
         return True, processed_count

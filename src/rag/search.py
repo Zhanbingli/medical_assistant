@@ -3,8 +3,9 @@
 """
 import ollama
 from sentence_transformers import CrossEncoder
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple, Dict, Any, Optional
 import logging
+from functools import lru_cache
 
 from config import (
     LLM_MODEL,
@@ -19,26 +20,14 @@ from config import (
 )
 from .database import MedicalKnowledgeDB
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 class QueryExpander:
-    """查询扩展器 - 生成相关的医学关键词 (Singleton)"""
-    _instance = None
-
-    def __new__(cls, *args, **kwargs):
-        if cls._instance is None:
-            cls._instance = super(QueryExpander, cls).__new__(cls)
-        return cls._instance
-
+    """查询扩展器 - 生成相关的医学关键词"""
+    
     def __init__(self, llm_model: str = LLM_MODEL):
-        """
-        初始化查询扩展器
-        """
-        if hasattr(self, 'llm_model'):
-           return
-
+        """初始化查询扩展器"""
         self.llm_model = llm_model
         logger.info(f"查询扩展器已初始化: 模型={llm_model}")
 
@@ -53,6 +42,10 @@ class QueryExpander:
         Returns:
             包含原始查询和扩展查询的列表
         """
+        if not query or not query.strip():
+            logger.warning("查询为空，返回空列表")
+            return []
+            
         prompt = QUERY_EXPANSION_PROMPT.format(query=query, count=count)
 
         try:
@@ -62,17 +55,24 @@ class QueryExpander:
                 options={'temperature': LLM_TEMPERATURE_CREATIVE}
             )
 
-            queries = response['message']['content'].strip().split('\n')
-            # 清理序号和空白
-            clean_queries = [
-                q.split('.')[-1].strip()
-                for q in queries
-                if q.strip()
-            ]
+            content = response.get('message', {}).get('content', '').strip()
+            if not content:
+                logger.warning("查询扩展返回空内容")
+                return [query]
 
-            # 原始查询 + 扩展查询
-            result = [query] + clean_queries[:count]
-            logger.info(f"查询扩展: {query} -> {result}")
+            # 清理序号和空白
+            clean_queries = []
+            for q in content.split('\n'):
+                q = q.strip()
+                if q:
+                    # 移除可能的序号前缀
+                    if '.' in q and q.split('.')[0].isdigit():
+                        q = '.'.join(q.split('.')[1:]).strip()
+                    clean_queries.append(q)
+
+            # 原始查询 + 扩展查询 (去重)
+            result = [query] + list(dict.fromkeys(clean_queries[:count]))
+            logger.info(f"查询扩展: 原始='{query}' -> 扩展={result}")
             return result
 
         except Exception as e:
@@ -81,21 +81,10 @@ class QueryExpander:
 
 
 class Reranker:
-    """重排序器 - 使用 CrossEncoder 对检索结果打分 (Singleton)"""
-    _instance = None
-
-    def __new__(cls, *args, **kwargs):
-        if cls._instance is None:
-            cls._instance = super(Reranker, cls).__new__(cls)
-        return cls._instance
-
+    """重排序器 - 使用 CrossEncoder 对检索结果打分"""
+    
     def __init__(self, model_name: str = RERANKER_MODEL):
-        """
-        初始化 Reranker
-        """
-        if hasattr(self, 'model'):
-            return
-
+        """初始化 Reranker"""
         self.model_name = model_name
         logger.info(f"正在加载 Rerank 模型: {model_name}")
         self.model = CrossEncoder(model_name)
@@ -121,18 +110,29 @@ class Reranker:
         if not documents:
             return []
 
-        # 构造查询-文档对
-        pairs = [[query, doc] for doc in documents]
-
-        # 预测分数
-        scores = self.model.predict(pairs)
-
-        # 组合并排序
-        scored_docs = list(zip(documents, scores, metadatas))
-        scored_docs.sort(key=lambda x: x[1], reverse=True)
-
-        logger.debug(f"Rerank 完成: {len(scored_docs)} 条结果")
-        return scored_docs
+        # 批处理防止 OOM
+        batch_size = 32
+        all_scored_docs = []
+        
+        for i in range(0, len(documents), batch_size):
+            batch_docs = documents[i:i + batch_size]
+            batch_metas = metadatas[i:i + batch_size]
+            
+            # 构造查询-文档对
+            pairs = [[query, doc] for doc in batch_docs]
+            
+            # 预测分数
+            scores = self.model.predict(pairs)
+            
+            # 组合
+            scored_docs = list(zip(batch_docs, scores, batch_metas))
+            all_scored_docs.extend(scored_docs)
+        
+        # 全局排序
+        all_scored_docs.sort(key=lambda x: x[1], reverse=True)
+        
+        logger.debug(f"Rerank 完成: {len(all_scored_docs)} 条结果")
+        return all_scored_docs
 
 
 class MedicalSearchEngine:
@@ -157,14 +157,23 @@ class MedicalSearchEngine:
         self.expander = expander
         logger.info("医学搜索引擎已初始化")
 
-    def _generate_embedding(self, text: str) -> List[float]:
-        """生成文本嵌入向量"""
+    @lru_cache(maxsize=256)
+    def _generate_embedding(self, text: str) -> Optional[List[float]]:
+        """生成文本嵌入向量（带缓存）"""
+        if not text or len(text.strip()) < 3:
+            logger.warning("查询文本过短，跳过嵌入生成")
+            return None
+            
         try:
             response = ollama.embeddings(model=EMBEDDING_MODEL, prompt=text)
-            return response['embedding']
+            embedding = response.get('embedding')
+            if embedding is None:
+                logger.error("Ollama 返回的 embedding 为 None")
+                return None
+            return embedding
         except Exception as e:
-            logger.error(f"嵌入生成失败: {e}")
-            return []
+            logger.error(f"嵌入生成失败: {e}, 文本长度: {len(text)}")
+            return None
 
     def _multi_recall(
         self,
@@ -188,30 +197,30 @@ class MedicalSearchEngine:
             try:
                 # 生成嵌入
                 embedding = self._generate_embedding(q)
-                if not embedding:
+                if embedding is None:
+                    debug_logs.append(f"⚠️ 无法生成查询 '{q}' 的嵌入向量")
                     continue
 
                 # 检索
                 results = self.db.query(embedding, n_results=RECALL_N_RESULTS)
 
-                # 提取结果
-                if results['documents'] and results['documents'][0]:
-                    docs = results['documents'][0]
-                    # 容错处理：如果没有 metadata，填充空字典
-                    metas = results.get('metadatas', [[]])[0]
-                    if not metas:
-                        metas = [{}] * len(docs)
+                # 提取结果并去重
+                docs = results.get('documents', [[]])[0]
+                metas = results.get('metadatas', [[]])[0]
+                
+                if not metas or len(metas) != len(docs):
+                    metas = [{}] * len(docs)
 
-                    # 去重
-                    for doc, meta in zip(docs, metas):
-                        if doc not in seen_docs:
-                            all_documents.append(doc)
-                            all_metadatas.append(meta)
-                            seen_docs.add(doc)
+                for doc, meta in zip(docs, metas):
+                    if doc and doc not in seen_docs:
+                        all_documents.append(doc)
+                        all_metadatas.append(meta or {})
+                        seen_docs.add(doc)
 
             except Exception as e:
                 debug_logs.append(f"⚠️ 检索关键词 '{q}' 时出错: {e}")
 
+        debug_logs.append(f"📊 多路召回完成: 原始查询 {len(queries)} 个，去重后 {len(all_documents)} 条结果")
         return all_documents, all_metadatas, debug_logs
 
     def search(
@@ -231,8 +240,12 @@ class MedicalSearchEngine:
         """
         debug_logs = []
 
+        if not query or not query.strip():
+            logger.warning("查询为空")
+            return "查询不能为空。", debug_logs
+
         try:
-            debug_logs.append(f"🔍 原始查询: {query}")
+            debug_logs.append(f"🔍 原始查询: '{query}'")
 
             # 1. 查询扩展
             expanded_queries = self.expander.expand(query, count=MULTI_QUERY_COUNT)
@@ -245,23 +258,24 @@ class MedicalSearchEngine:
 
             if not all_documents:
                 logger.info("未找到相关资料")
-                return "未找到相关资料。", debug_logs
+                return "未找到相关资料，建议调整查询词或补充更多细节。", debug_logs
 
-            debug_logs.append(f"∑ 共召回 {len(all_documents)} 条不重复片段，开始 Rerank...")
+            if debug:
+                debug_logs.append(f"∑ 共召回 {len(all_documents)} 条不重复片段，开始 Rerank...")
 
             # 3. Rerank 重排序
             scored_docs = self.reranker.rerank(query, all_documents, all_metadatas)
 
             # 4. 筛选高质量结果
             top_k_docs = []
-
+            
             for doc, score, meta in scored_docs:
                 source_name = meta.get('source', '未知来源') if meta else '未知来源'
 
                 # 记录详细日志
                 if debug:
-                    preview = doc[:20].replace('\n', ' ')
-                    log_str = f"[{score:.2f}] {source_name}: {preview}..."
+                    preview = doc[:50].replace('\n', ' ')
+                    log_str = f"[{score:.3f}] {source_name}: {preview}..."
                     debug_logs.append(log_str)
 
                 # 筛选逻辑：阈值过滤 + Top-K
@@ -271,7 +285,7 @@ class MedicalSearchEngine:
 
             if not top_k_docs:
                 logger.info("资料相关度较低")
-                return "资料相关度较低，建议补充细节。", debug_logs
+                return "资料相关度较低，建议补充更多细节或调整查询词。", debug_logs
 
             result_text = "\n---\n".join(top_k_docs)
             logger.info(f"搜索完成: 返回 {len(top_k_docs)} 条高质量结果")
@@ -279,5 +293,5 @@ class MedicalSearchEngine:
 
         except Exception as e:
             error_msg = f"检索过程发生错误: {str(e)}"
-            logger.error(error_msg)
+            logger.exception(error_msg)
             return error_msg, [str(e)]
