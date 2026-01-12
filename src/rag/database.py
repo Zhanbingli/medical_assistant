@@ -2,11 +2,13 @@
 数据库模块 - ChromaDB 操作封装
 提供医学知识库的增删改查功能
 """
-import chromadb
-from typing import Set, List, Dict, Any, Optional
 import logging
+import chromadb
+from typing import Set, List, Dict, Any, Optional, Tuple
 
-logging.basicConfig(level=logging.INFO)
+from src.utils.logger import setup_logging
+
+setup_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -22,15 +24,19 @@ class MedicalKnowledgeDB:
     def __init__(self, db_path: str, collection_name: str):
         """
         初始化数据库连接
+        
+        Args:
+            db_path: 数据库路径
+            collection_name: 集合名称
         """
         # 防止重复初始化
         if hasattr(self, 'client'):
             return
 
-        self.db_path = db_path
-        self.collection_name = collection_name
-        self.client = chromadb.PersistentClient(path=db_path)
-        self.collection = self.client.get_or_create_collection(name=collection_name)
+        self.db_path: str = db_path
+        self.collection_name: str = collection_name
+        self.client: chromadb.PersistentClient = chromadb.PersistentClient(path=db_path)
+        self.collection: chromadb.Collection = self.client.get_or_create_collection(name=collection_name)
         logger.info(f"数据库已初始化: {db_path}/{collection_name}")
 
     def get_existing_files(self) -> Set[str]:
@@ -56,7 +62,7 @@ class MedicalKnowledgeDB:
             logger.error(f"获取文件列表失败: {e}")
             return set()
 
-    def delete_file(self, filename: str) -> tuple[bool, Optional[str]]:
+    def delete_file(self, filename: str) -> Tuple[bool, Optional[str]]:
         """
         从数据库中删除指定文件的所有片段
 
@@ -64,7 +70,7 @@ class MedicalKnowledgeDB:
             filename: 要删除的文件名
 
         Returns:
-            (成功标志, 错误信息)
+            Tuple[bool, Optional[str]]: (成功标志, 错误信息)
         """
         try:
             self.collection.delete(where={"source": filename})
@@ -81,7 +87,7 @@ class MedicalKnowledgeDB:
         embeddings: List[List[float]],
         documents: List[str],
         metadatas: List[Dict[str, Any]]
-    ) -> tuple[bool, Optional[str]]:
+    ) -> Tuple[bool, Optional[str]]:
         """
         批量添加知识片段
 
@@ -92,7 +98,7 @@ class MedicalKnowledgeDB:
             metadatas: 元数据列表
 
         Returns:
-            (成功标志, 错误信息)
+            Tuple[bool, Optional[str]]: (成功标志, 错误信息)
         """
         try:
             self.collection.add(
@@ -121,7 +127,7 @@ class MedicalKnowledgeDB:
             n_results: 返回结果数量
 
         Returns:
-            检索结果字典
+            Dict[str, Any]: 检索结果字典
         """
         try:
             results = self.collection.query(
@@ -139,7 +145,7 @@ class MedicalKnowledgeDB:
         获取集合统计信息
 
         Returns:
-            统计信息字典
+            Dict[str, Any]: 统计信息字典
         """
         try:
             count = self.collection.count()
