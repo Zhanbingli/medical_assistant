@@ -1,167 +1,267 @@
 # AI Medical Knowledge Base Assistant
 
-AI医学知识库助手 - 基于RAG的循证医学问答系统
+AI医学知识库助手 - Evidence-based Medical Q&A System with RAG Architecture
 
-## 项目简介
+## Overview
 
-这是一个专业的AI医学知识库助手，采用RAG（检索增强生成）架构，以医学教材作为知识来源，实现类似实习医生的医学问答能力。
+A professional AI medical knowledge base assistant using RAG (Retrieval-Augmented Generation) architecture, with medical textbooks as the knowledge source, providing clinical consultation capabilities similar to a resident physician.
 
-### 核心特性
-- **循证医学**：强制基于知识库检索，确保回答有医学依据
-- **中文优化**：针对中文医学术语和教材优化
-- **ReAct架构**：采用推理-行动循环，模拟医生诊疗思维
-- **多路召回**：查询扩展 + 向量检索 + 重排序，提升检索质量
-- **Streamlit界面**：友好的交互式Web界面
+### Core Features
 
-## 技术栈
+- **Evidence-based Medicine**: Knowledge base retrieval as the foundation for all answers
+- **Chinese Optimization**: Optimized for Chinese medical terminology and textbooks
+- **Parallel Retrieval Architecture**: Concurrent search across knowledge base, PubMed, and model knowledge
+- **Confidence Scoring**: Each result includes confidence scores from different sources
+- **Streamlit UI**: Interactive WeChat-style chat interface
 
-- **后端框架**: Python 3.x
-- **Web界面**: Streamlit
-- **AI引擎**:
-  - Ollama (本地LLM推理)
-  - bge-m3 (中文嵌入模型)
-  - qwen2.5:7b (推理模型)
-  - BAAI/bge-reranker-base (重排序模型)
-- **向量数据库**: ChromaDB
-- **文档处理**: PyMuPDF4LLM
+## Tech Stack
 
-## 项目结构
+- **Backend**: Python 3.x
+- **Web UI**: Streamlit
+- **AI Engine**:
+  - Ollama (local LLM inference)
+  - bge-m3 (Chinese embedding model)
+  - medgemma-1.5-4b-it (medical reasoning model)
+- **Vector Database**: ChromaDB
+- **Document Processing**: PyMuPDF4LLM
+
+## Project Structure
 
 ```
-├── app.py                      # 主应用 (Streamlit)
-├── config.py                   # 配置管理
-├── convert.py                  # PDF转Markdown工具
-├── requirements.txt            # 依赖管理
-├── medical_db/                 # ChromaDB向量存储
-├── scripts/
-│   └── clean_md.py            # Markdown预处理
-├── src/                       # 核心模块
+├── app_v3.py                  # Main application (Streamlit)
+├── config.py                  # Configuration management
+├── prepare_rag.py             # RAG preprocessing script
+├── 诊断学_rag.md              # Cleaned medical textbook
+├── medical_db/                # ChromaDB vector storage
+├── src/
 │   ├── agent/                 # ReAct Agent
-│   │   ├── core.py           # 医学Agent
-│   │   └── tools.py          # 搜索工具
-│   ├── rag/                  # RAG核心
-│   │   ├── database.py       # 数据库接口
-│   │   ├── loader.py         # 文档加载器
-│   │   └── search.py         # 搜索引擎
+│   │   ├── core.py           # Medical Agent
+│   │   └── tools.py          # Search tools
+│   ├── rag/                  # RAG Core
+│   │   ├── database.py       # Database interface
+│   │   ├── loader.py         # Document loader
+│   │   └── search.py         # Search engine
+│   ├── retrieval/            # Retrieval module (NEW)
+│   │   ├── parallel_retriever.py  # Parallel retrieval
+│   │   └── result_fuser.py   # Multi-source fusion
 │   └── utils/
-└── data/                     # 数据文件
-    ├── *.pdf                 # 原始PDF教材
-    └── *.md                  # 处理后的Markdown
+│       ├── web_search.py     # PubMed search
+│       └── safety.py         # Medical safety
+├── archives/                  # Archived files
+└── tests/                     # Unit tests
 ```
 
-## 快速开始
+## Architecture
 
-### 环境要求
+```
+User Input
+    ↓
+┌─────────────────────────────────────┐
+│   Parallel Retrieval (simultaneous) │
+│  ┌─────────┐ ┌─────────┐ ┌─────┐  │
+│  │Knowledge│ │ PubMed  │ │Model│  │
+│  │   Base  │ │ Search  │ │Know.│  │
+│  └────┬────┘ └────┬─────┘ └──┬──┘  │
+└───────┼───────────┼──────────┼─────┘
+        └───────────┼──────────┘
+                    ↓
+         ┌──────────┴──────────┐
+         │  Result Fusion      │
+         │  - Deduplication    │
+         │  - Priority Sort    │
+         │  - Confidence Calc  │
+         └──────────┬──────────┘
+                    ↓
+         ┌──────────┴──────────┐
+         │ MedGemma Answer     │
+         │ Generation          │
+         └────────────────────┘
+                    ↓
+              Final Answer
+```
+
+## Quick Start
+
+### Requirements
 
 - Python 3.8+
-- Ollama (需提前安装并下载模型)
-- 至少8GB RAM
+- Ollama (with models pre-downloaded)
+- At least 8GB RAM
 
-### 安装步骤
+### Installation
 
-1. 克隆项目
 ```bash
-git clone <repository-url>
+# Clone and enter project
 cd pdf_markd
-```
 
-2. 安装依赖
-```bash
+# Install dependencies
 pip install -r requirements.txt
-```
 
-3. 配置Ollama模型
-```bash
-# 下载所需模型
-ollama pull qwen2.5:7b
+# Download required models
 ollama pull bge-m3
+ollama pull hf.co/unsloth/medgemma-1.5-4b-it-GGUF:Q4_K_M
+
+# Start application
+conda activate api_env
+streamlit run app_v3.py
 ```
 
-4. 启动应用
+### Data Preparation
+
+1. **Prepare RAG-ready file** (optional)
 ```bash
-streamlit run app.py
+python prepare_rag.py  # Cleans and optimizes markdown files
 ```
 
-### 数据准备
+2. **Upload Knowledge Base**
+- Upload Markdown-formatted medical textbooks via the web interface
+- System automatically chunks, vectorizes, and stores
 
-1. **PDF转换** (可选)
+## Configuration
+
+Main configuration in `config.py`:
+
+- **Models**: Embedding model, LLM model
+- **Document Processing**: Chunk size (600 chars), overlap (3 lines), batch size (20)
+- **Search**: Query expansion count, recall count, top-k, threshold
+- **RAG**: Recall results (10), rerank top-k (5)
+
+## Recent Technical Fixes
+
+### v1.1.0 (2026-01-16)
+
+#### 1. Project Cleanup
+- **Removed redundant files**: Archived `app.py`, `app_v2.py`, `convert.py`, `test_*.py`, `verify_*.py`
+- **Cleaned up documentation**: Moved summary markdown files to `archives/`
+- **Consolidated to single main app**: Now using only `app_v3.py`
+
+#### 2. Parallel Retrieval Architecture
+- **Created `parallel_retriever.py`**: Implements concurrent retrieval from 3 sources
+  - Knowledge Base (ChromaDB)
+  - PubMed (medical literature)
+  - Model Knowledge (MedGemma's own knowledge)
+- **Created `result_fuser.py`**: Merges multi-source results
+  - Deduplication using similarity threshold (0.75)
+  - Priority-based sorting (PubMed > Knowledge Base > Model)
+  - Confidence calculation using source weights
+
+#### 3. Bug Fix: Distance Calculation
+- **Fixed `TypeError` in parallel_retriever.py**
+- **Issue**: ChromaDB returned nested tuple structure causing `unsupported operand type(s) for -: 'tuple' and 'tuple'`
+- **Fix**: Added explicit type conversion `float(dist) if dist else 0.5`
+- **Improved distance normalization**: Now correctly calculates relevance scores from 0-1
+
+#### 4. Query Expansion Fix
+- **Problem**: MedGemma generated English query variations (e.g., "How to diagnose fever?")
+- **Solution**: Updated prompt in `search.py` to require Chinese output
+- **New prompt**:
+```python
+prompt = """针对这个医学问题，生成 {count} 个不同的检索关键词版本...
+要求：1. 使用中文 2. 每个版本独占一行..."""
+```
+- **Result**: Now generates Chinese keywords like ['发热的诊断标准', '体温升高', '感染性疾病']
+
+#### 5. Answer Generation Improvement
+- **Simplified answer generation**: Direct MedGemma adapter call instead of Agent flow
+- **Improved prompt**: Clearer instructions for Chinese medical answers
+- **Enhanced cleaning**: Added regex patterns to remove MedGemma thought tags
+- **Context optimization**: Simplified context to top 15 relevant lines
+
+**Before (MedGemma output)**:
+```
+Here's a thinking process to arrive at the concise answer about diagnosing jaundice:
+1. Understand the Goal...
+```
+
+**After (Cleaned Chinese answer)**:
+```
+黄疸的诊断需要结合临床表现、实验室检查和影像学检查。首先，通过测量血清总胆红素水平来初步判断是否存在黄疸。如果怀疑肝脏或胆道问题，则需要进行相应的检查。
+
+B型超声波检查可以帮助评估肝脏大小、形态、是否有肿瘤或结石...
+```
+
+#### 6. Knowledge Base Optimization
+- **Created `prepare_rag.py`**: Preprocesses medical textbooks for better RAG
+- **Removed**: Table of contents, page numbers, copyright pages, digital resource markers
+- **Retained**: 8 complete chapters with proper section structure
+- **Result**: 1139 clean chunks from 诊断学_rag.md
+
+#### 7. File Cleanup
+- **Deleted**: `诊断学_cleaned.md` (replaced with optimized version)
+- **Renamed**: Cleaned file now `诊断学_rag.md`
+
+### Performance
+
+| Metric | Before | After |
+|--------|--------|-------|
+| Knowledge Base Chunks | 1200 | 1139 |
+| Query Expansion | English | Chinese |
+| Answer Generation | Broken | Working |
+| Parallel Retrieval | - | 3 sources |
+
+## Core Algorithms
+
+### 1. Document Processing Pipeline
+```
+PDF → Markdown → Smart Chunking (preserving section info) → Vectorization → Storage
+```
+
+### 2. Parallel Retrieval Flow
+```
+User Query → Query Expansion (Chinese keywords) → Parallel Search
+  ├── Knowledge Base: ChromaDB with bge-m3 embeddings
+  ├── PubMed: Medical literature search
+  └── Model Knowledge: Direct MedGemma query
+→ Result Fusion (deduplication + prioritization)
+→ Context Building for Answer Generation
+→ MedGemma Response
+```
+
+### 3. Confidence Scoring
+```python
+# Source weights
+SOURCE_WEIGHTS = {
+    "pubmed": 0.9,      # Highest priority - authoritative medical literature
+    "knowledge_base": 0.7,  # Medium priority - local knowledge base
+    "model": 0.5        # Lower priority - model's own knowledge
+}
+
+# Final confidence = source_weight * relevance_score
+confidence = SOURCE_WEIGHTS[source] * relevance_score
+```
+
+## Development Guide
+
+### Adding New Features
+
+1. **New Search Strategy**: Modify `src/rag/search.py`
+2. **New Retrieval Logic**: Modify `src/retrieval/parallel_retriever.py`
+3. **New Answer Generation**: Modify `app_v3.py` `generate_answer_with_context()`
+4. **New Agent Logic**: Modify `src/agent/core.py`
+
+### Testing
+
 ```bash
-python convert.py input.pdf -o output.md
+# Run unit tests
+pytest tests/
+
+# Run integration tests
+pytest tests/test_medgemma_integration.py
+
+# Run performance benchmarks
+python tests/performance/benchmark.py
 ```
 
-2. **上传知识库**
-- 通过Web界面上传Markdown格式的医学教材
-- 系统会自动分块、向量化并存储
+## Important Notes
 
-## 配置说明
+- **Medical Disclaimer**: This system is for learning and reference only, cannot replace professional medical advice
+- **Data Security**: Medical data should be properly stored, local deployment recommended
+- **Model Choice**: MedGemma is optimized for medical reasoning
 
-主要配置在 `config.py` 中：
-
-- **模型配置**: 嵌入模型、LLM模型、重排序模型
-- **文档处理**: 分块大小(600字符)、重叠行数(3行)、批大小(20)
-- **搜索配置**: 查询扩展数、召回数量、Top-K、阈值
-- **Agent配置**: 最大推理步数(5步)、上下文轮数(2轮)
-
-## 核心算法
-
-### 1. 文档处理管道
-```
-PDF → Markdown → 智能分块(保留章节信息) → 向量化 → 存储
-```
-
-### 2. 搜索流程
-```
-用户查询 → 查询扩展(生成2个关键词) → 多路召回 → 去重 → 重排序 → 阈值过滤 → Top-3结果
-```
-
-### 3. ReAct Agent
-```
-用户问题 → [思考 → 检索 → 观察] × N → 最终答案
-强制规则：必须检索后才能回答，禁止"裸答"
-```
-
-## 性能优化
-
-- **缓存机制**: 嵌入向量缓存(lru_cache)
-- **批处理**: 文档嵌入和数据库写入批量化
-- **模型批处理**: Rerank模型支持批处理防止OOM
-- **单实例**: Reranker和QueryExpander单实例化
-- **流式响应**: 实时显示Agent思考过程
-
-## 开发指南
-
-### 添加新功能
-
-1. **新搜索策略**: 修改 `src/rag/search.py`
-2. **新Agent逻辑**: 修改 `src/agent/core.py`
-3. **新文档处理器**: 修改 `src/rag/loader.py`
-
-### 调试模式
-
-在侧边栏开启"调试模式"，可查看：
-- Rerank详细打分
-- 查询扩展结果
-- 召回文档详情
-
-## 注意事项
-
-- **医疗免责声明**: 本系统仅供学习和参考，不能替代专业医疗建议
-- **数据安全**: 医疗数据请妥善保管，建议本地部署
-- **模型要求**: 建议使用中文医学友好的模型（如qwen2.5系列）
-
-## 许可证
+## License
 
 MIT
 
-## 贡献
+## Contributing
 
-欢迎提交Issue和Pull Request！
-
-## 更新日志
-
-### v1.0.0 (2026-01-11)
-- 初始版本发布
-- RAG架构实现
-- ReAct Agent
-- Streamlit界面
-- 中文医学优化
+Issues and Pull Requests welcome!
