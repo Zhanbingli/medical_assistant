@@ -8,8 +8,10 @@ import logging
 import re
 from config import (
     LLM_MODEL, SYSTEM_PROMPT, MAX_REASONING_STEPS,
-    LLM_TEMPERATURE_STRICT, CONTEXT_HISTORY_TURNS
+    LLM_TEMPERATURE_STRICT, CONTEXT_HISTORY_TURNS,
+    MEDGEMMA_SYSTEM_PROMPT, MedGemmaConfig
 )
+from src.llm import get_adapter
 from .tools import SearchTool
 
 logger = logging.getLogger(__name__)
@@ -25,6 +27,7 @@ class MedicalAgent:
     def _parse_action(self, ai_content: str) -> Tuple[str, str]:
         """
         解析AI响应以提取搜索动作
+        支持中英文关键词，适应 MedGemma 输出格式
 
         Args:
             ai_content: 原始AI响应内容
@@ -32,30 +35,48 @@ class MedicalAgent:
         Returns:
             Tuple of (action_type, keyword) 或 ("", "") 如果没有找到action
         """
-        if "检索" not in ai_content:
+        # 定义所有可能的搜索关键词 (中英文)
+        search_keywords = ["检索", "search", "Search", "SEARCH", "查找", "查询"]
+        
+        found_keyword = None
+        for kw in search_keywords:
+            if kw in ai_content:
+                found_keyword = kw
+                break
+        
+        if not found_keyword:
             return "", ""
-            
-        # 支持多种格式
-        lines = ai_content.split('\n')
-        for line in lines:
-            if "检索" in line:
-                # 尝试不同的分隔符
-                for splitter in ["检索:", "检索：", "检索 "]:
-                    if splitter in line:
-                        parts = line.split(splitter, 1)
-                        if len(parts) > 1:
-                            keyword = parts[1].strip()
-                            if keyword:
-                                return "search", keyword
+        
+        # 支持的分隔符模式
+        splitter_patterns = [
+            rf"{re.escape(found_keyword)}[:：]\s*(.+)",  # "检索: 关键词"
+            rf"{re.escape(found_keyword)}\s+(.+)",        # "search 关键词"
+            rf"{re.escape(found_keyword)}\n(.+)",          # "search\n关键词"
+        ]
+        
+        for pattern in splitter_patterns:
+            match = re.search(pattern, ai_content, re.IGNORECASE)
+            if match:
+                keyword = match.group(1).strip()
+                # 清理关键词，移除可能的引用或格式
+                keyword = re.sub(r'^["\'\[\]]+|["\'\[\]]+$', '', keyword).strip()
+                if keyword and len(keyword) > 1:
+                    return "search", keyword
+        
         return "", ""
 
     def _check_final_answer(self, ai_content: str) -> bool:
-        """检查是否包含最终答案标记"""
-        return "Final Answer" in ai_content or "最终答案" in ai_content
+        """检查是否包含最终答案标记 (中英文)"""
+        final_markers = [
+            "Final Answer", "最终答案", "final answer", 
+            "Final answer", "答案", "Answer", "answer"
+        ]
+        return any(marker in ai_content for marker in final_markers)
 
     def _extract_final_answer(self, ai_content: str) -> str:
         """
         从AI响应中提取最终答案
+        支持中英文格式
 
         Args:
             ai_content: AI响应内容
@@ -63,27 +84,30 @@ class MedicalAgent:
         Returns:
             提取的最终答案文本
         """
-        # 尝试多种模式
+        # 尝试多种模式 (中英文)
         patterns = [
-            r"Final Answer[:：]\s*(.*)",
-            r"最终答案[:：]\s*(.*)",
-            r"Answer[:：]\s*(.*"
+            r"Final Answer[:：]?\s*(.+?)(?=\n\n|\n[A-Z]|$)",
+            r"最终答案[:：]?\s*(.+?)(?=\n\n|\n|$)",
+            r"Answer[:：]?\s*(.+?)(?=\n\n|\n[A-Z]|$)",
+            r"答案[:：]?\s*(.+?)(?=\n\n|\n|$)",
         ]
         
         for pattern in patterns:
-            match = re.search(pattern, ai_content, re.IGNORECASE | re.MULTILINE)
+            match = re.search(pattern, ai_content, re.IGNORECASE | re.DOTALL)
             if match:
                 answer = match.group(1).strip()
-                if answer:
+                if answer and len(answer.strip()) > 10:
+                    # 清理答案
+                    answer = re.sub(r'^["\'\[\]]+|["\'\[\]]+$', '', answer).strip()
                     return answer
         
-        # 回退：使用"Final Answer"或"最终答案"后的内容
-        for marker in ["Final Answer", "最终答案", "Answer"]:
+        # 回退：使用最终答案标记后的内容
+        fallback_markers = ["Final Answer", "最终答案", "Answer", "答案"]
+        for marker in fallback_markers:
             if marker in ai_content:
                 parts = ai_content.split(marker, 1)
                 if len(parts) > 1:
-                    # 移除开头的标点
-                    answer = parts[1].lstrip(":：:").strip()
+                    answer = parts[1].lstrip(":：: ").strip()
                     if answer:
                         return answer
 
@@ -109,7 +133,7 @@ class MedicalAgent:
             return
 
         # 构建对话上下文
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        messages = [{"role": "system", "content": MEDGEMMA_SYSTEM_PROMPT}]
 
         # 添加最近N轮对话历史
         history_start = max(0, len(history) - CONTEXT_HISTORY_TURNS * 2)
@@ -130,10 +154,10 @@ class MedicalAgent:
 
             try:
                 # 调用AI模型（严格模式）
-                response = ollama.chat(
-                    model=LLM_MODEL,
+                adapter = get_adapter()
+                response = adapter.chat(
                     messages=messages,
-                    options={'temperature': LLM_TEMPERATURE_STRICT}
+                    temperature=MedGemmaConfig.TEMPERATURE_STRICT
                 )
 
                 ai_content = response.get('message', {}).get('content', "")
@@ -183,17 +207,23 @@ class MedicalAgent:
 
                 # 5. 回退：如果响应足够长但没有明确标记
                 if len(ai_content.strip()) > 100:
-                    # 清理掉Thought和Action前缀
-                    cleaned_lines = []
-                    skip_prefixes = ["Thought:", "思考:", "Action:", "检索:", "检索：", "检索", "Observation:", "Observation:"]
+                    # 清理掉 Thought 和 Action 前缀 (中英文)
+                    skip_prefixes = [
+                        "Thought:", "思考:", "Action:", "行动:",
+                        "检索:", "search:", "Search:",
+                        "Observation:", "观察:", "obs:",
+                        "<thought>", "<action>", "<search>"
+                    ]
                     
+                    cleaned_lines = []
                     for line in ai_content.split('\n'):
                         skip = False
+                        line_stripped = line.strip()
                         for prefix in skip_prefixes:
-                            if line.strip().startswith(prefix):
+                            if line_stripped.startswith(prefix):
                                 skip = True
                                 break
-                        if not skip and line.strip():
+                        if not skip and line_stripped:
                             cleaned_lines.append(line)
                     
                     cleaned_answer = '\n'.join(cleaned_lines).strip()

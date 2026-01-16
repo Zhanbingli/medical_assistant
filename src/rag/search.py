@@ -16,8 +16,10 @@ from config import (
     RERANK_TOP_K,
     RERANK_THRESHOLD,
     LLM_TEMPERATURE_CREATIVE,
-    QUERY_EXPANSION_PROMPT
+    QUERY_EXPANSION_PROMPT,
+    MedGemmaConfig
 )
+from src.llm import get_adapter
 from .database import MedicalKnowledgeDB
 
 logger = logging.getLogger(__name__)
@@ -26,11 +28,11 @@ logger = logging.getLogger(__name__)
 class QueryExpander:
     """查询扩展器 - 生成相关的医学关键词"""
     
-    def __init__(self, llm_model: str = LLM_MODEL):
+    def __init__(self):
         """初始化查询扩展器"""
-        self.llm_model = llm_model
-        logger.info(f"查询扩展器已初始化: 模型={llm_model}")
-
+        self.adapter = get_adapter()
+        logger.info("查询扩展器已初始化 (MedGemma)")
+    
     def expand(self, query: str, count: int = MULTI_QUERY_COUNT) -> List[str]:
         """
         扩展查询词，生成多个相关关键词
@@ -45,14 +47,23 @@ class QueryExpander:
         if not query or not query.strip():
             logger.warning("查询为空，返回空列表")
             return []
-            
-        prompt = QUERY_EXPANSION_PROMPT.format(query=query, count=count)
+        
+        prompt = f"""针对这个医学问题，生成 {count} 个不同的检索关键词版本（包含同义词、相关术语、具体症状描述等），以便更好地从医学知识库中检索相关信息。
+要求：
+1. 使用中文
+2. 每个版本独占一行
+3. 不要添加序号或前缀
+4. 直接返回关键词，不要解释
+
+原问题: {query}
+
+检索关键词:"""
 
         try:
-            response = ollama.chat(
-                model=self.llm_model,
+            response = self.adapter.chat(
                 messages=[{'role': 'user', 'content': prompt}],
-                options={'temperature': LLM_TEMPERATURE_CREATIVE}
+                temperature=MedGemmaConfig.TEMPERATURE_CREATIVE,
+                max_tokens=512
             )
 
             content = response.get('message', {}).get('content', '').strip()
@@ -64,7 +75,9 @@ class QueryExpander:
             clean_queries = []
             for q in content.split('\n'):
                 q = q.strip()
-                if q:
+                # 移除常见的非关键词内容
+                q = q.replace('##', '').replace('思考过程', '').replace('检索关键词', '').strip()
+                if q and len(q) > 2 and not q.startswith('#'):
                     # 移除可能的序号前缀
                     if '.' in q and q.split('.')[0].isdigit():
                         q = '.'.join(q.split('.')[1:]).strip()

@@ -1,7 +1,7 @@
 """
 配置模块 - 集中管理应用配置和常量
 """
-from typing import Final
+from typing import Final, List
 
 # === 应用配置 ===
 APP_TITLE: Final[str] = "AI 循证医学助手"
@@ -16,16 +16,34 @@ EMBEDDING_MODEL: Final[str] = "bge-m3"
 LLM_MODEL: Final[str] = "qwen2.5:7b"
 RERANKER_MODEL: Final[str] = "BAAI/bge-reranker-base"
 
+# === MedGemma 配置 (当前使用) ===
+MEDGEMMA_MODEL: Final[str] = "hf.co/unsloth/medgemma-1.5-4b-it-GGUF:Q4_K_M"
+
+# === MedGemma 专用参数 ===
+class MedGemmaConfig:
+    """MedGemma 1.5 4B 配置"""
+    TEMPERATURE_STRICT: Final[float] = 0.1    # 严格推理模式
+    TEMPERATURE_CREATIVE: Final[float] = 0.5  # 查询扩展模式
+    MAX_TOKENS: Final[int] = 2048              # 最大生成长度
+    TOP_K: Final[int] = 10                     # Top-K采样
+    TOP_P: Final[float] = 0.9                  # Top-P采样
+    CONTEXT_LENGTH: Final[int] = 8192          # 上下文长度
+    STOP_TOKENS: Final[List[str]] = [
+        '<end_of_turn>',
+        '<<start_of_turn>>',
+        '<start_of_turn>'
+    ]
+
 # === 文档处理配置 ===
 CHUNK_SIZE: Final[int] = 600
 CHUNK_OVERLAP_LINES: Final[int] = 3
 BATCH_SIZE: Final[int] = 20
 
 # === 搜索配置 ===
-MULTI_QUERY_COUNT: Final[int] = 2
-RECALL_N_RESULTS: Final[int] = 3
-RERANK_TOP_K: Final[int] = 3
-RERANK_THRESHOLD: Final[float] = -10.0
+MULTI_QUERY_COUNT: Final[int] = 3        # 查询扩展数量
+RECALL_N_RESULTS: Final[int] = 10        # 召回数量 (从3改为10)
+RERANK_TOP_K: Final[int] = 5             # Top-K结果 (从3改为5)
+RERANK_THRESHOLD: Final[float] = -1.0    # Rerank阈值 (从-10.0改为-1.0)
 
 # === LLM 配置 ===
 MAX_REASONING_STEPS: Final[int] = 5
@@ -71,3 +89,8 @@ QUERY_EXPANSION_PROMPT = """
 2. 包含可能的关联疾病。
 3. 只输出 {count} 行关键词，不要有序号。
 """
+
+# === MedGemma 精简系统提示词 ===
+MEDGEMMA_SYSTEM_PROMPT: Final[str] = """You are a helpful medical assistant. 
+Provide accurate, evidence-based answers.
+Be concise and professional."""

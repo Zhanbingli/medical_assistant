@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class MarkdownProcessor:
-    """Markdown 文档智能处理器"""
+    """Markdown 文档智能处理器 - 优化版"""
 
     @staticmethod
     def split_smart(
@@ -24,6 +24,7 @@ class MarkdownProcessor:
     ) -> List[str]:
         """
         智能分块 Markdown 文档，保留章节上下文
+        优化：按段落和句子切分，保持医学术语完整性
 
         Args:
             text: Markdown 文本
@@ -36,49 +37,77 @@ class MarkdownProcessor:
         if not text or not text.strip():
             logger.warning("输入文本为空或仅包含空白字符")
             return []
-            
+        
         lines = text.split('\n')
         chunks = []
-        current_chunk = []
+        current_chunk_lines = []
         current_length = 0
         current_headers = []
-
-        for line in lines:
+        
+        # 段落分隔符：医学教材通常在空行处分段
+        paragraph_breaks = []
+        
+        for i, line in enumerate(lines):
             stripped = line.strip()
-
-            # 检测标题
+            
+            # 检测标题层级
             if stripped.startswith('#'):
                 level = len(stripped) - len(stripped.lstrip('#'))
                 title = stripped.strip('#').strip()
-
-                # 更新标题层级
+                
+                # 更新标题层级结构
                 if len(current_headers) >= level:
                     current_headers = current_headers[:level-1]
                 current_headers.append(title)
-
-                # 标题也作为正文的一部分，保证上下文连贯
-                current_chunk.append(line)
+                
+                # 标题作为上下文保留
+                current_chunk_lines.append(line)
                 current_length += len(line)
                 continue
-
-            current_chunk.append(line)
+            
+            # 累加行
+            current_chunk_lines.append(line)
             current_length += len(line)
-
-            # 达到分块大小，保存当前块
+            
+            # 检查是否达到块大小限制
             if current_length > chunk_size:
-                header_context = " > ".join(current_headers) if current_headers else "未分类"
-                full_text = f"【章节：{header_context}】\n" + "\n".join(current_chunk)
-                chunks.append(full_text)
-
-                # 重叠策略：保留最后几行
-                current_chunk = current_chunk[-overlap_lines:]
-                current_length = sum(len(l) for l in current_chunk)
+                # 尝试在段落边界切分
+                chunk_text = '\n'.join(current_chunk_lines)
+                
+                # 找到最后一个段落分隔点
+                last_para_break = chunk_text.rfind('\n\n')
+                if last_para_break > chunk_size * 0.5:  # 至少包含50%内容
+                    # 在段落边界切分
+                    chunk_content = chunk_text[:last_para_break].strip()
+                    next_content = chunk_text[last_para_break:].strip()
+                    
+                    if chunk_content:
+                        header_context = " > ".join(current_headers) if current_headers else "未分类"
+                        full_chunk = f"【章节：{header_context}】\n\n{chunk_content}"
+                        chunks.append(full_chunk)
+                    
+                    # 重置块，从下一段开始
+                    current_chunk_lines = [line] if stripped else []
+                    if next_content:
+                        # 保留部分内容到下一块
+                        next_lines = next_content.split('\n')
+                        current_chunk_lines = next_lines[:5]  # 最多保留5行
+                    current_length = sum(len(l) for l in current_chunk_lines)
+                else:
+                    # 硬切分，保留语义完整性
+                    header_context = " > ".join(current_headers) if current_headers else "未分类"
+                    full_chunk = f"【章节：{header_context}】\n\n{chunk_text}"
+                    chunks.append(full_chunk)
+                    
+                    # 重叠策略：保留最后几行
+                    current_chunk_lines = current_chunk_lines[-overlap_lines:]
+                    current_length = sum(len(l) for l in current_chunk_lines)
 
         # 保存最后一块
-        if current_chunk:
+        if current_chunk_lines:
             header_context = " > ".join(current_headers) if current_headers else "未分类"
-            full_text = f"【章节：{header_context}】\n" + "\n".join(current_chunk)
-            chunks.append(full_text)
+            full_chunk = f"【章节：{header_context}】\n\n" + '\n'.join(current_chunk_lines)
+            chunks.append(full_chunk)
 
         logger.info(f"文档已分块: 共 {len(chunks)} 块")
         return chunks

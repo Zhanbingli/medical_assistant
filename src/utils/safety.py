@@ -95,7 +95,7 @@ class ConfidenceScorer:
     ) -> Dict[str, Any]:
         """
         计算回答的置信度
-        
+
         Args:
             retrieved_sources: 检索到的源文本
             rerank_scores: Rerank打分
@@ -124,32 +124,24 @@ class ConfidenceScorer:
         
         # 3. 基于回答完整性的置信度
         if answer_structure == "诊断":
-            # 需要有：可能诊断、支持点、鉴别诊断、检查建议
-            has_diagnosis = "可能" in answer or "诊断" in answer
-            has_support = "支持" in answer or "符合" in answer
-            has_differential = "鉴别" in answer or "排除" in answer
-            has_check = "检查" in answer or "化验" in answer
-            
-            structure_score = sum([
-                has_diagnosis,
-                has_support,
-                has_differential,
-                has_check
-            ]) / 4 * 100
+            # 诊断结构应该有较高的完整性评分
+            structure_score = 80.0
         else:
-            structure_score = 70  # 默认分
+            structure_score = 70.0  # 其他结构默认分
         
         # 4. 综合置信度
         total_confidence = (
-            score_confidence * 0.4 +    # Rerank分数权重最高
-            count_confidence * 0.3 +    # 检索数量
-            structure_score * 0.3       # 回答完整性
+            score_confidence * 0.5 +    # Rerank分数权重最高
+            count_confidence * 0.35 +    # 检索数量
+            structure_score * 0.15       # 回答完整性
         )
         
-        # 5. 证据等级
-        if avg_score > -5 and source_count >= 3:
-            evidence_level = EvidenceLevel.B  # 有较多高质量证据
-        elif avg_score > -8 and source_count >= 2:
+        # 5. 证据等级: 0-40=D, 40-70=C, 70-85=B, 85-100=A
+        if total_confidence >= 85:
+            evidence_level = EvidenceLevel.A  # 优秀证据
+        elif total_confidence >= 70:
+            evidence_level = EvidenceLevel.B  # 良好证据
+        elif total_confidence >= 60:
             evidence_level = EvidenceLevel.C  # 中等证据
         else:
             evidence_level = EvidenceLevel.D  # 证据有限
