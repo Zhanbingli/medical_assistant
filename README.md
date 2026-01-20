@@ -1,7 +1,7 @@
 # AI Medical Knowledge Base Assistant
 
 AI医学知识库助手 - Evidence-based Medical Q&A System with RAG Architecture
-
+![medpicture](medpictuer.png)
 ## Overview
 
 A professional AI medical knowledge base assistant using RAG (Retrieval-Augmented Generation) architecture, with medical textbooks as the knowledge source, providing clinical consultation capabilities similar to a resident physician.
